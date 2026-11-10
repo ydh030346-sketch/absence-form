@@ -37,8 +37,8 @@ textarea{min-height:76px;resize:vertical}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .choice{display:flex;flex-direction:column;gap:8px}
 .opt{display:flex;flex-direction:row;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--ink);font-size:.95rem;cursor:pointer}
-.opt input{margin-top:5px;accent-color:var(--accent);width:18px;height:18px;flex:none}
-.opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.opt > input{margin-top:5px;accent-color:var(--accent);width:18px;height:18px;flex:none}
+.opt:has(> input:checked){border-color:var(--accent);background:var(--accent-soft)}
 .opt .sub{display:flex;flex-direction:column;gap:8px;flex:1;min-width:0}
 .fld{display:flex;flex-direction:column;gap:4px;font-size:.88rem;color:var(--muted);width:100%}
 .fld input{min-height:44px}
@@ -46,6 +46,10 @@ textarea{min-height:76px;resize:vertical}
 .prefill{background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
 .prefill b{font-size:1.05rem}
 .prefill span{color:var(--muted);font-size:.9rem}
+.typedsig{border:1.5px dashed var(--accent);border-radius:10px;background:#fff;padding:12px 14px;display:flex;flex-direction:column;align-items:center;gap:4px}
+.typedsig .cap{font-size:.8rem;color:var(--muted)}
+.typedsig .pv{font-family:"Nanum Myeongjo",serif;font-weight:800;font-size:2rem;color:#111;letter-spacing:.08em;min-height:2.6rem}
+.typedsig .pv.empty{font-family:var(--ui);font-weight:400;font-size:1rem;color:#a5b3ad;letter-spacing:0}
 .err{color:var(--warn);font-size:.85rem;margin:0}
 .sigbox{position:relative;border:1.5px dashed var(--accent);border-radius:10px;background:#fff;touch-action:none}
 .sigbox canvas{display:block;width:100%;height:170px;border-radius:10px}
@@ -142,10 +146,16 @@ button:disabled{opacity:.55;cursor:progress}
     <fieldset>
       <legend>보호자 서명</legend>
       <label>보호자(법정대리인) 이름<input id="pname" type="text" autocomplete="name" required></label>
-      <div>
+      <div class="row">
+        <label class="opt"><input type="radio" name="sigmode" value="typed" checked>이름으로 서명</label>
+        <label class="opt"><input type="radio" name="sigmode" value="draw">직접 그리기</label>
+      </div>
+      <div class="typedsig" id="typedBox"><span class="cap">(인) 자리에 들어갈 서명</span><span id="typedPv" class="pv">이름을 입력하세요</span></div>
+      <div id="drawBox" hidden>
         <div class="sigbox"><canvas id="sig"></canvas><div class="ph" id="sigPh">여기에 손가락으로 서명해 주세요</div></div>
         <div class="btns" style="justify-content:flex-end;margin-top:6px"><button type="button" class="ghost" id="sigClear">서명 지우기</button></div>
       </div>
+      <label class="opt"><input type="checkbox" id="confirm">본인이 이 학생의 보호자(법정대리인)이며, 위 내용을 확인하고 서명합니다.</label>
     </fieldset>
 
     <p class="err" id="err" role="alert"></p>
@@ -270,6 +280,31 @@ cv.addEventListener("pointermove", e => { if(!drawing) return; cur.push(pt(e)); 
 ["pointerup","pointercancel","pointerleave"].forEach(t=>cv.addEventListener(t,()=>drawing=false));
 $("sigClear").onclick = () => { strokes=[]; signed=false; $("sigPh").hidden=false; paint(); };
 
+/* ---- 서명 방식: 이름으로 서명(기본) / 직접 그리기 ---- */
+const sigMode = () => document.querySelector('input[name=sigmode]:checked').value;
+function syncSig(){
+  const typed = sigMode() === "typed";
+  $("typedBox").hidden = !typed; $("drawBox").hidden = typed;
+  if (!typed) sizeCanvas();
+  const n = $("pname").value.trim(), pv = $("typedPv");
+  pv.textContent = n || "이름을 입력하세요"; pv.classList.toggle("empty", !n);
+}
+document.querySelectorAll('input[name=sigmode]').forEach(r => r.addEventListener("change", syncSig));
+$("pname").addEventListener("input", syncSig);
+syncSig();
+/* 이름을 정자체로 그린 투명 PNG */
+async function typedSig(){
+  const name = $("pname").value.trim(), font = '800 64px "Nanum Myeongjo", serif';
+  try { await document.fonts.load(font, name); } catch {}
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  g.font = font; const w = Math.ceil(g.measureText(name).width) + 24;
+  c.width = w; c.height = 96;
+  g.fillStyle = "#fff"; g.fillRect(0, 8, w, 84);
+  g.font = font; g.fillStyle = "#111"; g.textBaseline = "middle"; g.fillText(name, 12, 50);
+  return c.toDataURL("image/png");
+}
+const getSig = () => sigMode() === "typed" ? typedSig() : Promise.resolve(sigImage());
+
 /* 서명 이미지: 여백을 잘라낸 투명 PNG */
 function sigImage(){
   const w=cv.width,h=cv.height,data=ctx.getImageData(0,0,w,h).data;
@@ -293,7 +328,8 @@ function validate(){
   if (doc.value==="diag" && !$("hospital").value.trim()) return ["병원명을 입력해 주세요.", $("hospital")];
   if (!document.querySelector('input[name=ret]:checked')) return ["제출 서류를 반환할지 파쇄할지 선택해 주세요.", $("fsDocs")];
   if (!document.querySelector('input[name=agree]:checked')) return ["개인정보 수집·이용 동의 여부를 선택해 주세요.", document.querySelector('input[name=agree]')];
-  if (!signed) return ["보호자 서명을 해 주세요.", cv];
+  if (sigMode() === "draw" && !signed) return ["보호자 서명을 해 주세요.", cv];
+  if (!$("confirm").checked) return ["보호자 본인 확인란에 체크해 주세요.", $("confirm")];
   return null;
 }
 
@@ -346,7 +382,7 @@ $("f").addEventListener("submit", async e => {
   if (bad){ bad[1].scrollIntoView({behavior:"smooth",block:"center"}); bad[1].focus?.(); return; }
   const btn = $("make"); btn.disabled = true; btn.textContent = "만드는 중…";
   try{
-    buildSheet(sigImage());
+    buildSheet(await getSig());
     await document.fonts.ready;
     await Promise.all([...$("sheet").querySelectorAll("img")].map(i=>i.complete?0:new Promise(r=>i.onload=i.onerror=r)));
     const canvas = await html2canvas($("sheet"), {scale:2, backgroundColor:"#ffffff", useCORS:true});
